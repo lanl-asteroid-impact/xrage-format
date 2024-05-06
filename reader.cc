@@ -172,7 +172,7 @@ std::shared_ptr<parquet::schema::GroupNode> GetSchema() {
 ParquetWriter::ParquetWriter(const ParquetWriterOptions& options,
                              std::shared_ptr<arrow::io::OutputStream> file) {
   parquet::WriterProperties::Builder builder;
-  // builder.compression(parquet::Compression::SNAPPY);
+  builder.compression(parquet::Compression::ZSTD);
   // builder.disable_dictionary();
   writer_ = new parquet::StreamWriter(parquet::ParquetFileWriter::Open(
       std::move(file), GetSchema(), builder.build()));
