@@ -1,4 +1,4 @@
-# Copyright (c) 2021 Triad National Security, LLC, as operator of Los Alamos
+# Copyright (c) 2024 Triad National Security, LLC, as operator of Los Alamos
 # National Laboratory with the U.S. Department of Energy/National Nuclear
 # Security Administration. All Rights Reserved.
 #
@@ -33,7 +33,7 @@
 # VTK requires CMake 3.12 in order to reliably be used.
 # CMake 3.8 is required for recognizing the cxx_std_17 used by Apache Arrow
 cmake_minimum_required(VERSION 3.12)
-project(xrange-format C CXX)
+project(xrage-format C CXX)
 
 find_package(VTK COMPONENTS
         CommonCore
@@ -47,10 +47,12 @@ endif ()
 find_package(Arrow REQUIRED)
 find_package(Parquet REQUIRED)
 
-add_executable(reader reader.cc)
-target_link_libraries(reader PRIVATE ${VTK_LIBRARIES}
-        Parquet::parquet_shared
-        Arrow::arrow_shared)
-vtk_module_autoinit(TARGETS reader
-        MODULES ${VTK_LIBRARIES}
-)
+foreach (tgt vti2pqt vtu2pqt)
+    add_executable(${tgt} ${tgt}.cc)
+    target_link_libraries(${tgt} PRIVATE ${VTK_LIBRARIES}
+            Parquet::parquet_shared
+            Arrow::arrow_shared)
+    vtk_module_autoinit(TARGETS ${tgt}
+            MODULES ${VTK_LIBRARIES}
+    )
+endforeach ()

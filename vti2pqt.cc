@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Triad National Security, LLC, as operator of Los Alamos
+ * Copyright (c) 2024 Triad National Security, LLC, as operator of Los Alamos
  * National Laboratory with the U.S. Department of Energy/National Nuclear
  * Security Administration. All Rights Reserved.
  *
@@ -33,13 +33,16 @@
  */
 
 #include <arrow/io/file.h>
+#include <arrow/util/key_value_metadata.h>
 #include <parquet/stream_writer.h>
 
-#include <vtkCellData.h>
+#include <vtkFieldData.h>
 #include <vtkFloatArray.h>
+#include <vtkImageData.h>
+#include <vtkIntArray.h>
 #include <vtkNew.h>
-#include <vtkUnstructuredGrid.h>
-#include <vtkXMLUnstructuredGridReader.h>
+#include <vtkPointData.h>
+#include <vtkXMLImageDataReader.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -47,65 +50,71 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include <unordered_map>
 
-namespace xrage {
+namespace {
 
 class Iterator {
  public:
-  explicit Iterator(vtkUnstructuredGrid* grid);
+  explicit Iterator(vtkImageData* image);
   ~Iterator() {}
 
   void SeekToFirst() { i_ = 0; }
   bool Valid() const { return i_ >= 0 && i_ < n_; }
   void Next() { i_++; }
 
-  float rho() const { return rho_[i_]; }
   float prs() const { return prs_[i_]; }
   float tev() const { return tev_[i_]; }
-  float xdt() const { return xdt_[i_]; }
-  float ydt() const { return ydt_[i_]; }
-  float zdt() const { return zdt_[i_]; }
-  float snd() const { return snd_[i_]; }
-  float grd() const { return grd_[i_]; }
-  float mat() const { return mat_[i_]; }
   float v02() const { return v02_[i_]; }
   float v03() const { return v03_[i_]; }
 
  private:
   int n_;  // Total number of elements
-  float* rho_;
   float* prs_;
   float* tev_;
-  float* xdt_;
-  float* ydt_;
-  float* zdt_;
-  float* snd_;
-  float* grd_;
-  float* mat_;
   float* v02_;
   float* v03_;
   int i_;
 };
 
-Iterator::Iterator(vtkUnstructuredGrid* grid) {
-  vtkCellData* const celldata = grid->GetCellData();
-  n_ = grid->GetNumberOfCells();
-#define GET_POINTER(celldata, fieldname)                             \
-  vtkFloatArray::FastDownCast(celldata->GetAbstractArray(fieldname)) \
+Iterator::Iterator(vtkImageData* image) {
+  vtkPointData* const pointData = image->GetPointData();
+  n_ = image->GetNumberOfPoints();
+#define GET_POINTER(pointData, attributename)                             \
+  vtkFloatArray::FastDownCast(pointData->GetAbstractArray(attributename)) \
       ->GetPointer(0)
-  rho_ = GET_POINTER(celldata, "rho");
-  prs_ = GET_POINTER(celldata, "prs");
-  tev_ = GET_POINTER(celldata, "tev");
-  xdt_ = GET_POINTER(celldata, "xdt");
-  ydt_ = GET_POINTER(celldata, "ydt");
-  zdt_ = GET_POINTER(celldata, "zdt");
-  snd_ = GET_POINTER(celldata, "snd");
-  grd_ = GET_POINTER(celldata, "grd");
-  mat_ = GET_POINTER(celldata, "mat");
-  v02_ = GET_POINTER(celldata, "v02");
-  v03_ = GET_POINTER(celldata, "v03");
+  prs_ = GET_POINTER(pointData, "prs");
+  tev_ = GET_POINTER(pointData, "tev");
+  v02_ = GET_POINTER(pointData, "v02");
+  v03_ = GET_POINTER(pointData, "v03");
 #undef GET_POINTER
   i_ = 0;
+}
+
+std::unordered_map<std::string, std::string> ExtraMetadata(
+    vtkImageData* image) {
+  std::unordered_map<std::string, std::string> kv;
+  vtkFieldData* fieldData = image->GetFieldData();
+  int* ext = image->GetExtent();
+  kv["extent_0"] = std::to_string(ext[0]);
+  kv["extent_1"] = std::to_string(ext[1]);
+  kv["extent_2"] = std::to_string(ext[2]);
+  kv["extent_3"] = std::to_string(ext[3]);
+  kv["extent_4"] = std::to_string(ext[4]);
+  kv["extent_5"] = std::to_string(ext[5]);
+  double* ori = image->GetOrigin();
+  kv["origin_0"] = std::to_string(ori[0]);
+  kv["origin_1"] = std::to_string(ori[1]);
+  kv["origin_2"] = std::to_string(ori[2]);
+  double* spacing = image->GetSpacing();
+  kv["spacing_0"] = std::to_string(spacing[0]);
+  kv["spacing_1"] = std::to_string(spacing[1]);
+  kv["spacing_2"] = std::to_string(spacing[2]);
+  int cycle_index =
+      vtkIntArray::FastDownCast(fieldData->GetAbstractArray("cycle_index"))
+          ->GetValue(0);
+  kv["cycle_index"] = std::to_string(cycle_index);
+  return kv;
 }
 
 struct ParquetWriterOptions {
@@ -115,7 +124,8 @@ struct ParquetWriterOptions {
 class ParquetWriter {
  public:
   ParquetWriter(const ParquetWriterOptions& options,
-                std::shared_ptr<arrow::io::OutputStream> file);
+                std::shared_ptr<arrow::io::OutputStream> file,
+                std::shared_ptr<const arrow::KeyValueMetadata> kv);
   void Append(Iterator* it);
   void Finish();
   ~ParquetWriter();
@@ -131,31 +141,10 @@ namespace {
 std::shared_ptr<parquet::schema::GroupNode> GetSchema() {
   parquet::schema::NodeVector fields;
   fields.push_back(parquet::schema::PrimitiveNode::Make(
-      "rho", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
-      parquet::ConvertedType::NONE));
-  fields.push_back(parquet::schema::PrimitiveNode::Make(
       "prs", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
       parquet::ConvertedType::NONE));
   fields.push_back(parquet::schema::PrimitiveNode::Make(
       "tev", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
-      parquet::ConvertedType::NONE));
-  fields.push_back(parquet::schema::PrimitiveNode::Make(
-      "xdt", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
-      parquet::ConvertedType::NONE));
-  fields.push_back(parquet::schema::PrimitiveNode::Make(
-      "ydt", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
-      parquet::ConvertedType::NONE));
-  fields.push_back(parquet::schema::PrimitiveNode::Make(
-      "zdt", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
-      parquet::ConvertedType::NONE));
-  fields.push_back(parquet::schema::PrimitiveNode::Make(
-      "snd", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
-      parquet::ConvertedType::NONE));
-  fields.push_back(parquet::schema::PrimitiveNode::Make(
-      "grd", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
-      parquet::ConvertedType::NONE));
-  fields.push_back(parquet::schema::PrimitiveNode::Make(
-      "mat", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
       parquet::ConvertedType::NONE));
   fields.push_back(parquet::schema::PrimitiveNode::Make(
       "v02", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
@@ -169,19 +158,21 @@ std::shared_ptr<parquet::schema::GroupNode> GetSchema() {
 }
 }  // namespace
 
-ParquetWriter::ParquetWriter(const ParquetWriterOptions& options,
-                             std::shared_ptr<arrow::io::OutputStream> file) {
+ParquetWriter::ParquetWriter(
+    const ParquetWriterOptions& options,
+    std::shared_ptr<arrow::io::OutputStream> file,
+    std::shared_ptr<const arrow::KeyValueMetadata> kv) {
   parquet::WriterProperties::Builder builder;
   builder.compression(parquet::Compression::ZSTD);
-  // builder.disable_dictionary();
+  builder.encoding(parquet::Encoding::PLAIN);
+  builder.disable_dictionary();
   writer_ = new parquet::StreamWriter(parquet::ParquetFileWriter::Open(
-      std::move(file), GetSchema(), builder.build()));
+      std::move(file), GetSchema(), builder.build(), std::move(kv)));
 }
 
 void ParquetWriter::Append(Iterator* it) {
-  *writer_ << it->rho() << it->prs() << it->tev() << it->xdt() << it->ydt()
-           << it->zdt() << it->snd() << it->grd() << it->mat() << it->v02()
-           << it->v03() << parquet::EndRow;
+  *writer_ << it->prs() << it->tev() << it->v02() << it->v03()
+           << parquet::EndRow;
 }
 
 void ParquetWriter::Finish() {
@@ -191,7 +182,7 @@ void ParquetWriter::Finish() {
 
 ParquetWriter::~ParquetWriter() { delete writer_; }
 
-}  // namespace xrage
+}  // namespace
 
 inline bool StringEndWith(const std::string& str, const char* suffix) {
   std::size_t lenstr = str.length();
@@ -204,14 +195,16 @@ inline bool StringEndWith(const std::string& str, const char* suffix) {
 
 void Rewrite(const std::string& from, const std::string& to) {
   printf("Rewriting %s to parquet... \n", from.c_str());
-  vtkNew<vtkXMLUnstructuredGridReader> reader;
+  vtkNew<vtkXMLImageDataReader> reader;
   reader->SetFileName(from.c_str());
   reader->Update();
-  vtkUnstructuredGrid* grid = reader->GetOutput();
+  vtkImageData* image = reader->GetOutput();
   std::shared_ptr<arrow::io::FileOutputStream> file;
   PARQUET_ASSIGN_OR_THROW(file, arrow::io::FileOutputStream::Open(to))
-  xrage::ParquetWriter writer(xrage::ParquetWriterOptions(), file);
-  xrage::Iterator it(grid);
+  ParquetWriter writer(
+      ParquetWriterOptions(), file,
+      std::make_shared<arrow::KeyValueMetadata>(ExtraMetadata(image)));
+  Iterator it(image);
   it.SeekToFirst();
   while (it.Valid()) {
     writer.Append(&it);
@@ -234,7 +227,7 @@ void ProcessDir(const char* indir, const char* outdir) {
   while (entry) {
     if (entry->d_type == DT_REG || entry->d_type == DT_LNK) {
       const std::string f = entry->d_name;
-      if (StringEndWith(f, ".vtu")) {
+      if (StringEndWith(f, ".vti")) {
         tmp1.resize(base1);
         tmp1 += '/';
         tmp1 += f;
