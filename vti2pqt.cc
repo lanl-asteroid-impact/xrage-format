@@ -46,6 +46,8 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -135,17 +137,21 @@ class ParquetWriter {
   ParquetWriter(const ParquetWriter&);
   void operator=(const ParquetWriter& other);
   parquet::StreamWriter* writer_;
+  int32_t rowid_;
 };
 
 namespace {
 std::shared_ptr<parquet::schema::GroupNode> GetSchema() {
   parquet::schema::NodeVector fields;
   fields.push_back(parquet::schema::PrimitiveNode::Make(
-      "prs", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
-      parquet::ConvertedType::NONE));
-  fields.push_back(parquet::schema::PrimitiveNode::Make(
-      "tev", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
-      parquet::ConvertedType::NONE));
+      "rowid", parquet::Repetition::REQUIRED, parquet::Type::INT32,
+      parquet::ConvertedType::INT_32));
+  //  fields.push_back(parquet::schema::PrimitiveNode::Make(
+  //      "prs", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
+  //      parquet::ConvertedType::NONE));
+  //  fields.push_back(parquet::schema::PrimitiveNode::Make(
+  //      "tev", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
+  //      parquet::ConvertedType::NONE));
   fields.push_back(parquet::schema::PrimitiveNode::Make(
       "v02", parquet::Repetition::REQUIRED, parquet::Type::FLOAT,
       parquet::ConvertedType::NONE));
@@ -158,12 +164,14 @@ std::shared_ptr<parquet::schema::GroupNode> GetSchema() {
 }
 }  // namespace
 
-ParquetWriter::ParquetWriter(
-    const ParquetWriterOptions& options,
-    std::shared_ptr<arrow::io::OutputStream> file,
-    std::shared_ptr<const arrow::KeyValueMetadata> kv) {
+ParquetWriter::ParquetWriter(const ParquetWriterOptions& options,
+                             std::shared_ptr<arrow::io::OutputStream> file,
+                             std::shared_ptr<const arrow::KeyValueMetadata> kv)
+    : writer_(nullptr), rowid_(0) {
   parquet::WriterProperties::Builder builder;
-  builder.compression(parquet::Compression::ZSTD);
+  builder.compression("rowid", parquet::Compression::SNAPPY);
+  builder.compression(parquet::Compression::UNCOMPRESSED);
+  builder.encoding("rowid", parquet::Encoding::DELTA_BINARY_PACKED);
   builder.encoding(parquet::Encoding::PLAIN);
   builder.disable_dictionary();
   writer_ = new parquet::StreamWriter(parquet::ParquetFileWriter::Open(
@@ -171,13 +179,15 @@ ParquetWriter::ParquetWriter(
 }
 
 void ParquetWriter::Append(Iterator* it) {
-  *writer_ << it->prs() << it->tev() << it->v02() << it->v03()
-           << parquet::EndRow;
+  //*writer_ << it->prs() << it->tev() << it->v02() << it->v03()
+  //       << parquet::EndRow;
+  *writer_ << rowid_++ << roundf(it->v02() * 1000000) / 1000000
+           << roundf(it->v03() * 1000000) / 1000000 << parquet::EndRow;
 }
 
 void ParquetWriter::Finish() {
   delete writer_;
-  writer_ = NULL;
+  writer_ = nullptr;
 }
 
 ParquetWriter::~ParquetWriter() { delete writer_; }
