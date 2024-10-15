@@ -36,6 +36,7 @@
 #include <arrow/util/key_value_metadata.h>
 #include <parquet/stream_writer.h>
 
+#include <vtkDataArraySelection.h>
 #include <vtkFieldData.h>
 #include <vtkFloatArray.h>
 #include <vtkImageData.h>
@@ -182,6 +183,11 @@ void Rewrite(const std::string& from, int timestep, ParquetWriter* writer) {
   printf("Processing %s... \n", from.c_str());
   vtkNew<vtkXMLImageDataReader> reader;
   reader->SetFileName(from.c_str());
+  reader->UpdateInformation();
+  vtkDataArraySelection* das = reader->GetPointDataArraySelection();
+  das->DisableAllArrays();
+  das->EnableArray("v02");
+  das->EnableArray("v03");
   reader->Update();
   Iterator it(reader->GetOutput());
   it.SeekToFirst();
