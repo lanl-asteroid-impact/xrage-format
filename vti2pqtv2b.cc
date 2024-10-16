@@ -169,6 +169,11 @@ void Rewrite(int timestep, const std::string& from, const std::string& to) {
   printf("Rewriting %s to parquet... \n", from.c_str());
   vtkNew<vtkXMLImageDataReader> reader;
   reader->SetFileName(from.c_str());
+  reader->UpdateInformation();
+  vtkDataArraySelection* das = reader->GetPointDataArraySelection();
+  das->DisableAllArrays();
+  das->EnableArray("v02");
+  das->EnableArray("v03");
   reader->Update();
   vtkImageData* image = reader->GetOutput();
   std::shared_ptr<arrow::io::FileOutputStream> file;
