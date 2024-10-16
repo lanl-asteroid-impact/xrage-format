@@ -37,10 +37,8 @@
 #include <parquet/stream_writer.h>
 
 #include <vtkDataArraySelection.h>
-#include <vtkFieldData.h>
 #include <vtkFloatArray.h>
 #include <vtkImageData.h>
-#include <vtkIntArray.h>
 #include <vtkNew.h>
 #include <vtkPointData.h>
 #include <vtkXMLImageDataReader.h>
