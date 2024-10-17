@@ -87,7 +87,8 @@ Iterator::Iterator(vtkImageData* image) {
 }
 
 struct ParquetWriterOptions {
-  ParquetWriterOptions() {}
+  ParquetWriterOptions(int rowid) : rowid(rowid) {}
+  int32_t rowid;
 };
 
 class ParquetWriter {
@@ -129,7 +130,7 @@ std::shared_ptr<parquet::schema::GroupNode> GetSchema() {
 
 ParquetWriter::ParquetWriter(const ParquetWriterOptions& options,
                              std::shared_ptr<arrow::io::OutputStream> file)
-    : writer_(nullptr), rowid_(0) {
+    : writer_(nullptr), rowid_(options.rowid) {
   parquet::WriterProperties::Builder builder;
   builder.compression("timestep", parquet::Compression::SNAPPY);
   builder.compression("rowid", parquet::Compression::SNAPPY);
@@ -165,6 +166,21 @@ inline bool StringEndWith(const std::string& str, const char* suffix) {
   return std::strncmp(&str[0] + lenstr - lensuffix, suffix, lensuffix) == 0;
 }
 
+int Rewrite0(int timestep, int rowid, Iterator* it, const std::string& from,
+             const std::string& to) {
+  std::shared_ptr<arrow::io::FileOutputStream> file;
+  PARQUET_ASSIGN_OR_THROW(file, arrow::io::FileOutputStream::Open(to))
+  ParquetWriter writer(ParquetWriterOptions(rowid), file);
+  int n = 0;
+  while (it->Valid() && n < 100 * 500 * 500) {
+    writer.Append(timestep, it->v02(), it->v03());
+    n++;
+    it->Next();
+  }
+  writer.Finish();
+  return n;
+}
+
 void Rewrite(int timestep, const std::string& from, const std::string& to) {
   printf("Rewriting %s to parquet... \n", from.c_str());
   vtkNew<vtkXMLImageDataReader> reader;
@@ -176,16 +192,18 @@ void Rewrite(int timestep, const std::string& from, const std::string& to) {
   das->EnableArray("v03");
   reader->Update();
   vtkImageData* image = reader->GetOutput();
-  std::shared_ptr<arrow::io::FileOutputStream> file;
-  PARQUET_ASSIGN_OR_THROW(file, arrow::io::FileOutputStream::Open(to))
-  ParquetWriter writer(ParquetWriterOptions(), file);
   Iterator it(image);
   it.SeekToFirst();
+  std::string myto = to;
+  int i = 0;
+  int rowid = 0;
   while (it.Valid()) {
-    writer.Append(timestep, it.v02(), it.v03());
-    it.Next();
+    myto.resize(to.size());
+    myto += ".";
+    myto += std::to_string(i);
+    i++;
+    rowid += Rewrite0(timestep, rowid, &it, from, myto);
   }
-  writer.Finish();
 }
 
 void ProcessDir(const char* indir, const char* outdir) {
