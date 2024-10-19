@@ -33,7 +33,6 @@
  */
 
 #include <arrow/io/file.h>
-#include <arrow/util/key_value_metadata.h>
 #include <parquet/stream_writer.h>
 
 #include <vtkDataArraySelection.h>
