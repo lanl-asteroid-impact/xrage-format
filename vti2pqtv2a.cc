@@ -51,7 +51,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
-#include <unordered_map>
 
 namespace {
 
