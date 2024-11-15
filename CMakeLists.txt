@@ -47,7 +47,7 @@ endif ()
 find_package(Arrow REQUIRED)
 find_package(Parquet REQUIRED)
 
-foreach (tgt vti2pqt vti2pqtv2a vti2pqtv2b vtu2pqt)
+foreach (tgt vti2pqt vti2pqtv2a vti2pqtv2b vti2pqtv2c pqt2pqt vtu2pqt)
     add_executable(${tgt} ${tgt}.cc)
     target_link_libraries(${tgt} PRIVATE ${VTK_LIBRARIES}
             Parquet::parquet_shared
